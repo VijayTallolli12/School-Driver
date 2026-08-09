@@ -59,6 +59,15 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "apiUrl": "https://school-erp-production-e3a5.up.railway.app/api/v1",
+      "googleMapsApiKey": "YOUR_ANDROID_GOOGLE_MAPS_API_KEY",
+      "router": {},
+      "eas": {
+        "projectId": "cef32a3a-a355-48de-9eb4-e4138717f345"
+      }
+    },
+    "owner": "vijaytallollis-team"
   }
 }
