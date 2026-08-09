@@ -7,8 +7,9 @@ import { router } from "expo-router";
 import { Card } from "@/components/ui/Card";
 import { storage } from "@/utils/storage";
 import { STORAGE_KEYS } from "@/constants/config";
+import { stopTripTracking } from "@/services/tripTracking";
 
-const MENU_ITEMS = [
+const PARENT_MENU_ITEMS = [
   { icon: "person-outline", label: "Edit Profile", route: "/profile/edit-profile" },
   { icon: "lock-closed-outline", label: "Change Password", route: "/profile/change-password" },
   { icon: "notifications-outline", label: "Notifications", route: "/notifications" },
@@ -16,11 +17,19 @@ const MENU_ITEMS = [
   { icon: "help-circle-outline", label: "Help & Support", route: "/profile/help" },
 ] as const;
 
+const DRIVER_MENU_ITEMS = [
+  { icon: "time-outline", label: "Trip History", route: "/transport/trip-history" },
+  { icon: "notifications-outline", label: "Notifications", route: "/notifications" },
+  { icon: "settings-outline", label: "Settings", route: "/profile/settings" },
+] as const;
+
 export default function ProfileScreen() {
   const user = useAuthStore((s) => s.user);
   const students = useAuthStore((s) => s.students);
   const logout = useAuthStore((s) => s.logout);
   const branding = useBrandingStore((s) => s.branding);
+  const isDriver = user?.role === "driver";
+  const menuItems = isDriver ? DRIVER_MENU_ITEMS : PARENT_MENU_ITEMS;
 
   const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -29,6 +38,7 @@ export default function ProfileScreen() {
         text: "Logout",
         style: "destructive",
         onPress: async () => {
+          await stopTripTracking();
           await storage.remove(STORAGE_KEYS.AUTH_TOKEN);
           await storage.remove(STORAGE_KEYS.USER_DATA);
           await storage.remove("school_parent_auth_store");
@@ -74,7 +84,7 @@ export default function ProfileScreen() {
             </View>
           )}
           <Text className="text-slate-900 text-lg font-bold">{schoolName}</Text>
-          <Text className="text-slate-500 text-sm mt-0.5">{user?.email || "parent@school.com"}</Text>
+          <Text className="text-slate-500 text-sm mt-0.5">{user?.email || (isDriver ? "driver@school.com" : "parent@school.com")}</Text>
         </Card>
 
         <Card padding="none" className="overflow-hidden mb-4">
@@ -97,7 +107,7 @@ export default function ProfileScreen() {
           ))}
         </Card>
 
-        {students.length > 0 && (
+        {!isDriver && students.length > 0 && (
           <View className="mb-4">
             <Text className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-3">Linked Students</Text>
             <Card padding="none" className="overflow-hidden">
@@ -120,10 +130,10 @@ export default function ProfileScreen() {
         )}
 
         <Card padding="none" className="overflow-hidden mb-6">
-          {MENU_ITEMS.map((item, index) => (
+          {menuItems.map((item, index) => (
             <TouchableOpacity
               key={item.label}
-              className={`flex-row items-center px-5 py-4 ${index < MENU_ITEMS.length - 1 ? "border-b border-slate-50" : ""}`}
+              className={`flex-row items-center px-5 py-4 ${index < menuItems.length - 1 ? "border-b border-slate-50" : ""}`}
               activeOpacity={0.7}
               onPress={() => handleMenuPress(item.route)}
             >

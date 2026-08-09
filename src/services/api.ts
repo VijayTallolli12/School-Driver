@@ -3,7 +3,7 @@ import { API_BASE_URL } from "@/config/api";
 import { storage } from "@/utils/storage";
 import { STORAGE_KEYS } from "@/constants/config";
 import { useAuthStore } from "@/store/auth.store";
-import type { AttendanceData, DashboardData, NotificationItem, StudentFee, ExamResultRecord, TimetableData, HomeworkItem, CalendarEvent, StudentDocument, CircularItem, LeaveRequest, LeaveRequestPayload, TransportDashboardData, TransportData, TransportStop } from "@/types";
+import type { AttendanceData, DashboardData, NotificationItem, StudentFee, ExamResultRecord, TimetableData, HomeworkItem, CalendarEvent, StudentDocument, CircularItem, LeaveRequest, LeaveRequestPayload, TransportDashboardData, TransportData, TransportStop, TransportLiveData, VehicleLocationHistoryPoint, DriverTripActionPayload, DriverTripStateResponse, DriverTripSummary, DriverTripStudent, DriverTripStudentStatus, TripLocationPoint, TripHistoryItem, SosAlertPayload } from "@/types";
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -39,8 +39,10 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    const fullUrl = `${config.baseURL ?? API_BASE_URL}${config.url ?? ""}`;
-    console.log("[API] REQUEST:", config.method?.toUpperCase(), fullUrl);
+    if (__DEV__) {
+      const fullUrl = `${config.baseURL ?? API_BASE_URL}${config.url ?? ""}`;
+      console.log("[API] REQUEST:", config.method?.toUpperCase(), fullUrl);
+    }
     return config;
   },
   (error) => Promise.reject(error),
@@ -75,23 +77,53 @@ export function getErrorMessage(error: unknown): string {
   return err.response?.data?.message ?? err.message ?? "Something went wrong. Please try again.";
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const RETRYABLE_METHODS = new Set(["get", "head", "options"]);
+
 apiClient.interceptors.response.use(
   (response) => {
-    console.log("[API] RESPONSE:", response.status, response.config.url);
+    if (__DEV__) {
+      console.log("[API] RESPONSE:", response.status, response.config.url);
+    }
     return response;
   },
   async (error) => {
     if (error.response) {
-      console.log("[API] ERROR:", error.response.status, error.response.config.url, error.response.data);
-    } else if (error.request) {
-      console.log("[API] ERROR: Network Error - no response received:", error.config?.url);
-    } else {
-      console.log("[API] ERROR:", error.message);
+      if (__DEV__) {
+        console.log("[API] ERROR:", error.response.status, error.response.config?.url, error.response.data);
+      }
+      if (error.response.status === 401) {
+        await clearAuthData();
+      }
+      return Promise.reject(error);
     }
-    if (error.response?.status === 401) {
-      await clearAuthData();
+
+    // No response received → network failure or timeout. Automatic retry is
+    // safe for GET/HEAD and for endpoints that opt in (`retryable`). Mutating
+    // trip actions (start/end) are NOT retried to avoid double side-effects.
+    if (__DEV__) {
+      console.log("[API] ERROR: network/timeout ->", error.config?.url);
     }
-    return Promise.reject(error);
+
+    const config = error.config;
+    const method = typeof config?.method === "string" ? config.method.toLowerCase() : "get";
+    const optedIn = config?.retryable === true;
+    const safeToRetry = optedIn || RETRYABLE_METHODS.has(method);
+    const maxRetries = optedIn ? 2 : 1;
+    const retryCount = config?.retryCount ?? 0;
+
+    if (!config || !safeToRetry || retryCount >= maxRetries) {
+      return Promise.reject(error);
+    }
+
+    const backoffMs = 500 * Math.pow(2, retryCount); // 1s, then 2s
+    await sleep(backoffMs);
+    config.retryCount = retryCount + 1;
+    config.timeout = Math.max(config.timeout ?? 15000, 15000) + 10000;
+    return apiClient(config);
   },
 );
 
@@ -357,5 +389,293 @@ export async function fetchTransportDashboard(parentUuid: string, childUuid: str
      stops: (body.stops ?? []) as unknown as TransportStop[],
    };
  }
+
+export async function fetchTransportLive(): Promise<TransportLiveData> {
+  const res = await apiClient.get("/transport/live");
+  return unwrap<TransportLiveData>(res);
+}
+
+export interface VehicleLocationPayload {
+  vehicle_id: number;
+  latitude: number;
+  longitude: number;
+  speed?: number;
+  heading?: number;
+  accuracy?: number;
+  recorded_at?: string;
+}
+
+export async function updateVehicleLocation(payload: VehicleLocationPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/transport/location", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function fetchVehicleLocationHistory(vehicleId: number): Promise<VehicleLocationHistoryPoint[]> {
+  const res = await apiClient.get(`/transport/vehicle/${vehicleId}/location`);
+  const data = unwrap<{ data?: VehicleLocationHistoryPoint[]; locations?: VehicleLocationHistoryPoint[] }>(res);
+  return data.data ?? data.locations ?? [];
+}
+
+export interface DriverRouteActionPayload {
+  route_id: number;
+  vehicle_id: number;
+  stop_id?: number;
+  student_id?: number;
+  latitude?: number;
+  longitude?: number;
+  trip_status?: "started" | "completed";
+  pickup_status?: "waiting" | "boarded" | "absent";
+  drop_status?: "dropped" | "not_dropped" | "absent";
+  notes?: string;
+}
+
+export async function startDriverShift(payload: DriverRouteActionPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/transport/shift/start", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function endDriverShift(payload: DriverRouteActionPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/transport/shift/end", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function markPickup(payload: DriverRouteActionPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/transport/pickup", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function markDrop(payload: DriverRouteActionPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/transport/drop", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+// ─── Driver Trip Execution ───────────────────────────────────────
+//
+// The Laravel backend models trips as pre-created records (status:
+// "scheduled" | "in_progress" | "completed") scoped to a driver + date.
+//   GET  /driver/trips/current   -> current (or next scheduled) trip
+//   POST /driver/trips/start     -> body { trip_id } (validated required)
+//   GET  /driver/trips/{trip}    -> trip + route + vehicle + stops
+// Payloads nest `trip` / `route` / `vehicle` / `stops`, so we normalize
+// them into the app's flat DriverTripSummary shape.
+
+type DriverTripStatusRaw = "scheduled" | "in_progress" | "completed";
+
+function normalizeDriverStatus(status: unknown): DriverTripSummary["status"] {
+  if (status === "in_progress" || status === "completed") return status;
+  return "not_started";
+}
+
+function normalizeDriverPickupStatus(value: unknown): DriverTripStudentStatus {
+  if (value === "picked_up" || value === "missed") return value;
+  return "pending";
+}
+
+function normalizeDriverDropStatus(value: unknown): DriverTripStudentStatus {
+  if (value === "dropped_off" || value === "missed") return value;
+  return "pending";
+}
+
+function normalizeDriverStudentMap(student: Record<string, unknown>): DriverTripStudent {
+  return {
+    // Backend pickup/drop/mark-missed routes take `trip_student_id`
+    // (the pivot id), never the raw student id.
+    id:
+      typeof student.trip_student_id === "number"
+        ? (student.trip_student_id as number)
+        : typeof student.id === "number"
+          ? (student.id as number)
+          : 0,
+    name:
+      (typeof student.name === "string" && student.name.trim().length > 0 ? student.name : null) ??
+      (typeof student.student_name === "string" && (student.student_name as string).trim().length > 0 ? (student.student_name as string) : null) ??
+      "Student",
+    class: typeof student.class === "string" ? (student.class as string) : "",
+    pickup_status: normalizeDriverPickupStatus(student.pickup_status),
+    drop_status: normalizeDriverDropStatus(student.drop_status),
+    stop_name: typeof student.stop_name === "string" && (student.stop_name as string).trim().length > 0 ? (student.stop_name as string) : null,
+    stop_sequence: typeof student.stop_sequence === "number" ? (student.stop_sequence as number) : null,
+    picked_up_at: typeof student.picked_up_at === "string" ? (student.picked_up_at as string) : null,
+    dropped_off_at: typeof student.dropped_off_at === "string" ? (student.dropped_off_at as string) : null,
+  };
+}
+
+function normalizeDriverTripDetails(payload: Record<string, unknown> | null): DriverTripSummary {
+  const trip = (payload?.trip && typeof payload.trip === "object" ? (payload.trip as Record<string, unknown>) : {}) as Record<string, unknown>;
+  const route = (payload?.route && typeof payload.route === "object" ? (payload.route as Record<string, unknown>) : {}) as Record<string, unknown>;
+  const vehicle = payload?.vehicle && typeof payload.vehicle === "object" ? (payload.vehicle as Record<string, unknown>) : null;
+  const rawStops = Array.isArray(payload?.stops) ? (payload.stops as Record<string, unknown>[]) : [];
+  const rawStudents = Array.isArray(payload?.students) ? (payload.students as Record<string, unknown>[]) : [];
+
+  const startedAt = typeof trip.started_at === "string" ? trip.started_at : null;
+  const stops = rawStops.map((stop, index) => ({
+    id: typeof stop.stop_id === "number" ? stop.stop_id : typeof stop.id === "number" ? (stop.id as number) : index + 1,
+    name:
+      (typeof stop.stop_name === "string" && stop.stop_name.trim().length > 0 ? stop.stop_name : null) ??
+      (typeof stop.name === "string" && stop.name.trim().length > 0 ? (stop.name as string) : null) ??
+      `Stop ${index + 1}`,
+    sequence: typeof stop.sequence === "number" ? (stop.sequence as number) : index + 1,
+    eta: typeof stop.eta === "string" ? (stop.eta as string) : null,
+    latitude: typeof stop.latitude === "number" ? (stop.latitude as number) : null,
+    longitude: typeof stop.longitude === "number" ? (stop.longitude as number) : null,
+    arrived_at: typeof stop.arrived_at === "string" ? (stop.arrived_at as string) : null,
+    left_at: typeof stop.left_at === "string" ? (stop.left_at as string) : null,
+    students: Array.isArray(stop.students) ? (stop.students as Record<string, unknown>[]).map(normalizeDriverStudentMap) : [],
+  }));
+
+  // Progress is authoritative from the backend (per-stop arrived_at/left_at).
+  // Fall back to local derivation when a response omits it so behaviour stays
+  // stable against older payloads.
+  const currentFromStops = (() => {
+    const current = stops.find((stop) => Boolean(stop.arrived_at) && !stop.left_at);
+    return current ? current.id : null;
+  })();
+  const completedFromStops = stops.filter((stop) => Boolean(stop.left_at)).length;
+  const nextFromStops = (() => {
+    if (currentFromStops == null) return null;
+    const idx = stops.findIndex((stop) => stop.id === currentFromStops);
+    if (idx >= 0 && idx + 1 < stops.length) return stops[idx + 1].id;
+    return null;
+  })();
+
+  const type = trip.type === "drop" ? "drop" : "pickup";
+
+  return {
+    id: typeof trip.id === "number" ? (trip.id as number) : 0,
+    status: normalizeDriverStatus(trip.status as DriverTripStatusRaw),
+    type,
+    route_name: (typeof route.route_name === "string" && route.route_name.trim().length > 0 ? route.route_name : "") as string,
+    vehicle_number: (typeof vehicle?.vehicle_number === "string" && (vehicle.vehicle_number as string).trim().length > 0 ? (vehicle.vehicle_number as string) : "") as string,
+    start_time: startedAt,
+    total_stops: typeof route.total_stops === "number" ? (route.total_stops as number) : stops.length,
+    total_students: typeof trip.total_students === "number" ? (trip.total_students as number) : rawStudents.length,
+    completed_stops: typeof trip.completed_stops === "number" ? (trip.completed_stops as number) : completedFromStops,
+    picked_students: typeof trip.picked_up_count === "number" ? (trip.picked_up_count as number) : 0,
+    current_stop_id: typeof trip.current_stop_id === "number" ? (trip.current_stop_id as number) : currentFromStops,
+    next_stop_id: typeof trip.next_stop_id === "number" ? (trip.next_stop_id as number) : nextFromStops,
+    started_at: startedAt,
+    stops,
+    students: rawStudents.map(normalizeDriverStudentMap),
+  };
+}
+
+export async function fetchDriverTripState(): Promise<DriverTripStateResponse> {
+  const res = await apiClient.get("/driver/trips/current");
+  const payload = unwrap<Record<string, unknown>>(res);
+  const tripPayload =
+    payload.trip && typeof payload.trip === "object" && Object.keys(payload.trip as Record<string, unknown>).length > 0
+      ? (payload as Record<string, unknown>)
+      : null;
+  const trip = tripPayload ? normalizeDriverTripDetails(tripPayload) : null;
+  return {
+    has_active_trip: trip !== null,
+    trip,
+  };
+}
+
+export async function fetchDriverTrip(tripId: number): Promise<DriverTripSummary> {
+  const res = await apiClient.get(`/driver/trips/${tripId}`);
+  const payload = unwrap<Record<string, unknown>>(res);
+  return normalizeDriverTripDetails(payload);
+}
+
+export async function startDriverTrip(tripId: number): Promise<DriverTripSummary> {
+  const res = await apiClient.post("/driver/trips/start", { trip_id: tripId });
+  const payload = unwrap<{ trip?: Record<string, unknown> }>(res);
+  return normalizeDriverTripDetails({ trip: payload?.trip ?? {} } as Record<string, unknown>);
+}
+
+export async function arriveAtStop(tripId: number, stopId: number): Promise<DriverTripSummary> {
+  const res = await apiClient.post(`/driver/trips/${tripId}/arrive-stop`, { route_stop_id: stopId });
+  unwrap(res);
+  return fetchDriverTrip(tripId);
+}
+
+export async function leaveStop(tripId: number, stopId: number): Promise<DriverTripSummary> {
+  const res = await apiClient.post(`/driver/trips/${tripId}/leave-stop`, { route_stop_id: stopId });
+  unwrap(res);
+  return fetchDriverTrip(tripId);
+}
+
+export async function markDriverTripAction(payload: DriverTripActionPayload): Promise<Record<string, unknown>> {
+  const endpoint =
+    payload.action === "missed"
+      ? `/driver/trips/${payload.trip_id}/mark-missed`
+      : `/driver/trips/${payload.trip_id}/${payload.action}`;
+  const res = await apiClient.post(
+    endpoint,
+    {
+      trip_student_id: payload.trip_student_id,
+      triggered_at: payload.triggered_at,
+    },
+    {
+      headers: {
+        "Idempotency-Key": payload.action_id,
+      },
+      retryable: true,
+    },
+  );
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function endDriverTrip(tripId: number): Promise<DriverTripSummary> {
+  const res = await apiClient.post(`/driver/trips/${tripId}/end`);
+  const payload = unwrap<{ trip?: Record<string, unknown> }>(res);
+  return normalizeDriverTripDetails({ trip: payload?.trip ?? {} } as Record<string, unknown>);
+}
+
+// ─── Driver SOS / Trip History / Push Tokens ──────────────────
+
+export async function sendSosAlert(payload: SosAlertPayload): Promise<Record<string, unknown>> {
+  const res = await apiClient.post("/driver/sos", payload);
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function fetchTripHistory(): Promise<TripHistoryItem[]> {
+  const res = await apiClient.get("/driver/trips");
+  const body = unwrap<{ trips?: TripHistoryItem[]; data?: TripHistoryItem[] }>(res);
+  return body.trips ?? body.data ?? [];
+}
+
+export async function registerPushToken(
+  token: string,
+  platform: "android" | "ios",
+): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await apiClient.post("/driver/push-token", { token, platform });
+    return unwrap<Record<string, unknown>>(res);
+  } catch {
+    // Best-effort — push registration must never block app flows.
+    return null;
+  }
+}
+
+// ─── Driver Trip Live Location ────────────────────────────────
+
+const MAX_LOCATION_BATCH_SIZE = 20;
+
+export async function uploadTripLocations(tripId: number, points: TripLocationPoint[]): Promise<Record<string, unknown>> {
+  const res = await apiClient.post(
+    `/driver/trips/${tripId}/location`,
+    {
+      locations: points,
+    },
+    { retryable: true },
+  );
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function uploadTripLocation(tripId: number, point: TripLocationPoint): Promise<Record<string, unknown>> {
+  const res = await apiClient.post(
+    `/driver/trips/${tripId}/location`,
+    point,
+    { retryable: true },
+  );
+  return unwrap<Record<string, unknown>>(res);
+}
+
+export async function isLocationBatchSupported(): Promise<boolean> {
+  return MAX_LOCATION_BATCH_SIZE > 0;
+}
 
 export default apiClient;

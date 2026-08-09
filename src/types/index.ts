@@ -4,7 +4,7 @@ export interface User {
   email: string;
   phone: string;
   avatar_url: string | null;
-  role: "parent";
+  role: "parent" | "driver";
 }
 
 export interface Student {
@@ -26,6 +26,9 @@ export interface AuthState {
   isLoading: boolean;
   parentUuid: string | null;
   selectedStudentUuid: string | null;
+  driverUuid: string | null;
+  assignedVehicleId: number | null;
+  assignedRouteId: number | null;
 }
 
 export interface LoginPayload {
@@ -38,6 +41,9 @@ export interface LoginResponse {
   students: Student[];
   token: string;
   parent_uuid?: string;
+  driver_uuid?: string;
+  vehicle_id?: number;
+  route_id?: number;
 }
 
 export interface ApiResponse<T> {
@@ -271,3 +277,159 @@ export interface TransportDashboardData {
    transport: TransportData | null;
    stops: TransportStop[];
 }
+
+export interface TransportLiveData {
+  transport?: Record<string, unknown> | null;
+  vehicle?: Record<string, unknown> | null;
+  assignment?: Record<string, unknown> | null;
+  data?: Record<string, unknown> | null;
+  stops?: Record<string, unknown>[];
+  route_stops?: Record<string, unknown>[];
+  locations?: Record<string, unknown>[];
+  current_location?: {
+    latitude?: number;
+    longitude?: number;
+    speed?: number | null;
+    heading?: number | null;
+    accuracy?: number | null;
+    recorded_at?: string | null;
+  } | null;
+  [key: string]: unknown;
+}
+
+export interface VehicleLocationHistoryPoint {
+  latitude?: number;
+  longitude?: number;
+  speed?: number | null;
+  heading?: number | null;
+  accuracy?: number | null;
+  recorded_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DriverLocationSnapshot {
+  latitude: number;
+  longitude: number;
+  speed: number | null;
+  heading: number | null;
+  accuracy: number | null;
+  timestamp: string;
+}
+
+export type DriverTripStatus = "not_started" | "in_progress" | "completed";
+
+export type DriverTripStudentStatus = "pending" | "picked_up" | "dropped_off" | "missed";
+
+export type DriverTripAction = "pickup" | "drop";
+
+export type DriverTripActionKind = DriverTripAction | "missed";
+
+export interface DriverTripStudent {
+  /** trip_student_id — the id the pickup/drop/missed endpoints take */
+  id: number;
+  name: string;
+  class: string;
+  pickup_status: DriverTripStudentStatus;
+  drop_status: DriverTripStudentStatus;
+  stop_name?: string | null;
+  stop_sequence?: number | null;
+  picked_up_at?: string | null;
+  dropped_off_at?: string | null;
+}
+
+export interface DriverTripStop {
+  id: number;
+  name: string;
+  sequence: number;
+  eta?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  arrived_at?: string | null;
+  left_at?: string | null;
+  students: DriverTripStudent[];
+}
+
+export interface DriverTripSummary {
+  id: number;
+  status: DriverTripStatus;
+  type: "pickup" | "drop";
+  route_name: string;
+  vehicle_number: string;
+  start_time: string | null;
+  total_stops: number;
+  total_students: number;
+  completed_stops: number;
+  picked_students: number;
+  current_stop_id: number | null;
+  next_stop_id: number | null;
+  started_at: string | null;
+  stops: DriverTripStop[];
+  students: DriverTripStudent[];
+}
+
+export interface DriverTripStateResponse {
+  has_active_trip: boolean;
+  trip: DriverTripSummary | null;
+}
+
+export interface TripHistoryItem {
+  id: number;
+  status?: string;
+  type?: "pickup" | "drop";
+  route_name?: string | null;
+  vehicle_number?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  total_stops?: number;
+  completed_stops?: number;
+  total_students?: number;
+  picked_students?: number;
+  dropped_students?: number;
+  [key: string]: unknown;
+}
+
+export interface SosAlertPayload {
+  driver_id?: number | null;
+  driver_uuid?: string | null;
+  trip_id?: number | null;
+  vehicle_id?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+  recorded_at?: string | null;
+  message?: string | null;
+}
+
+export type DriverTripActionPayload = {
+  trip_id: number;
+  trip_student_id: number;
+  action: DriverTripActionKind;
+  action_id: string;
+  triggered_at: string;
+};
+
+export interface QueuedDriverAction extends DriverTripActionPayload {
+  queued_at: string;
+  retries: number;
+  last_error?: string;
+}
+
+// ─── Live Trip Location Tracking ──────────────────────────────
+
+export interface TripLocationPoint {
+  lat: number;
+  lng: number;
+  speed: number | null;
+  heading: number | null;
+  accuracy?: number | null;
+  timestamp: string;
+}
+
+export interface QueuedTripLocation extends TripLocationPoint {
+  trip_id: number;
+  queued_at: string;
+  retries: number;
+  last_error?: string;
+}
+
+export type TripTrackingStatus = "idle" | "tracking" | "paused" | "denied" | "gps_off" | "offline" | "error";

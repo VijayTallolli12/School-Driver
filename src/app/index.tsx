@@ -3,9 +3,11 @@ import { router } from "expo-router";
 import { View, Text, Animated, Image } from "react-native";
 import { useAuthStore } from "@/store/auth.store";
 import { useBrandingStore } from "@/store/branding.store";
+import { normalizeUserRole } from "@/utils/roles";
 
 export default function SplashScreen() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const user = useAuthStore((s) => s.user);
   const branding = useBrandingStore((s) => s.branding);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -27,8 +29,14 @@ export default function SplashScreen() {
 
     const timer = setTimeout(() => {
       if (isAuthenticated) {
-        console.log("[Splash] Authenticated, redirecting to /(tabs)/(home)");
-        router.replace("/(tabs)/(home)" as any);
+        const role = normalizeUserRole(user);
+        if (role === "driver") {
+          console.log("[Splash] Authenticated driver, redirecting to /transport");
+          router.replace("/(tabs)/(home)/transport" as any);
+        } else {
+          console.log("[Splash] Authenticated, redirecting to /(tabs)/(home)");
+          router.replace("/(tabs)/(home)" as any);
+        }
       } else {
         console.log("[Splash] Not authenticated, redirecting to /(auth)/login");
         router.replace("/(auth)/login" as any);
@@ -36,7 +44,7 @@ export default function SplashScreen() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user]);
 
   const appName = branding.appName || "School ERP";
   const schoolName = branding.schoolName || "School ERP";

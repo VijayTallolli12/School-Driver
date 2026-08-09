@@ -1,16 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { View, Text, ScrollView, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuthStore } from "@/store/auth.store";
 import { useBrandingStore } from "@/store/branding.store";
+import { normalizeUserRole } from "@/utils/roles";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { OfflineState } from "@/components/ui/OfflineState";
 import { ChildSwitcher } from "@/components/ChildSwitcher";
-import { fetchDashboard } from "@/services/api";
-import type { DashboardData, NotificationItem } from "@/types";
+import { fetchDashboard, fetchTransportLive } from "@/services/api";
+import type { DashboardData, NotificationItem, TransportLiveData } from "@/types";
+import { normalizeTransportDashboardFromLive } from "@/utils/transport";
 
 const MODULES = [
   { icon: "calendar-outline" as const, label: "Attendance", color: "#3B82F6", route: "attendance" },
@@ -23,6 +25,15 @@ const MODULES = [
   { icon: "folder-open-outline" as const, label: "Documents", color: "#6B7280", route: "documents" },
   { icon: "document-text-outline" as const, label: "Leave", color: "#06B6D4", route: "leave" },
   { icon: "bus-outline" as const, label: "Transport", color: "#14B8A6", route: "transport" },
+];
+
+const DRIVER_MODULES = [
+  { icon: "play-circle-outline" as const, label: "Trip Control", color: "#10B981", route: "transport" },
+  { icon: "time-outline" as const, label: "Trip History", color: "#6366F1", route: "transport/trip-history" },
+  { icon: "locate-outline" as const, label: "Live GPS", color: "#0EA5E9", route: "transport/live-gps" },
+  { icon: "warning-outline" as const, label: "Emergency SOS", color: "#EF4444", route: "transport/emergency" },
+  { icon: "notifications-outline" as const, label: "Notifications", color: "#64748B", route: "notifications" },
+  { icon: "settings-outline" as const, label: "Settings", color: "#64748B", route: "profile/settings" },
 ];
 
 const LEAVE_COLORS = {
@@ -63,6 +74,7 @@ function formatRelativeTime(dateStr: string): string {
 export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [driverLiveData, setDriverLiveData] = useState<TransportLiveData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,10 +84,35 @@ export default function DashboardScreen() {
   const selectedStudentUuid = useAuthStore((s) => s.selectedStudentUuid);
   const setSelectedStudentUuid = useAuthStore((s) => s.setSelectedStudentUuid);
   const hasStudents = students.length > 0;
+  const isDriver = normalizeUserRole(user) === "driver";
   const branding = useBrandingStore((s) => s.branding);
   const refreshBranding = useBrandingStore((s) => s.refreshBranding);
 
+  // Driver Home is the trip control screen (flow-first), not the ERP dashboard.
+  const driverRouted = useRef(false);
+  useEffect(() => {
+    if (isDriver && !driverRouted.current) {
+      driverRouted.current = true;
+      router.replace("/(tabs)/(home)/transport" as any);
+    }
+  }, [isDriver]);
+
   const loadDashboard = useCallback(async () => {
+    if (isDriver) {
+      try {
+        setError(null);
+        const live = await fetchTransportLive();
+        setDriverLiveData(live);
+      } catch (err: any) {
+        console.error("[Dashboard] driver load error:", err);
+        setError(err?.message ?? "Failed to load driver dashboard");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+      return;
+    }
+
     if (!parentUuid) {
       setLoading(false);
       setRefreshing(false);
@@ -91,7 +128,7 @@ export default function DashboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, [parentUuid, selectedStudentUuid]);
+  }, [isDriver, parentUuid, selectedStudentUuid]);
 
   useEffect(() => {
     loadDashboard();
@@ -109,6 +146,8 @@ export default function DashboardScreen() {
   const notifs = data?.notifications ?? [];
   const examsSummary = data?.exam_results_summary;
   const leaveSummary = data?.leave_summary;
+  const driverModules = DRIVER_MODULES;
+  const driverTransport = normalizeTransportDashboardFromLive(driverLiveData).transport;
 
   const handleOpenNotification = useCallback((item: NotificationItem) => {
     if (!item || !item.id) return;
@@ -167,12 +206,14 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        <View className="mt-3">
-          <ChildSwitcher
-            selectedUuid={selectedStudentUuid}
-            onSelect={(uuid) => setSelectedStudentUuid(uuid)}
-          />
-        </View>
+        {!isDriver ? (
+          <View className="mt-3">
+            <ChildSwitcher
+              selectedUuid={selectedStudentUuid}
+              onSelect={(uuid) => setSelectedStudentUuid(uuid)}
+            />
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -192,6 +233,90 @@ export default function DashboardScreen() {
             message={error}
             onRetry={onRefresh}
           />
+        ) : isDriver ? (
+          <>
+            <View className="pt-5 pb-1">
+              <Text className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                Driver Overview
+              </Text>
+            </View>
+
+            <View className="flex-row gap-2.5 mt-3 mb-6">
+              <Card padding="md" className="flex-1">
+                <View className="items-center">
+                  <Text className="text-slate-900 text-2xl font-bold" numberOfLines={1} style={{ lineHeight: 30 }}>
+                    {driverTransport?.vehicle_number ?? "Live"}
+                  </Text>
+                  <View className="flex-row items-center gap-1 mt-1.5">
+                    <View className="w-5 h-5 bg-cyan-50 rounded-md items-center justify-center">
+                      <Ionicons name="bus-outline" size={12} color="#06B6D4" />
+                    </View>
+                    <Text className="text-slate-500 text-[11px] font-medium" numberOfLines={1}>
+                      Transport Status
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+              <Card padding="md" className="flex-1">
+                <View className="items-center">
+                  <Text className="text-slate-900 text-2xl font-bold" numberOfLines={1} style={{ lineHeight: 30 }}>
+                    {user?.name?.split(" ")?.[0] ?? "Driver"}
+                  </Text>
+                  <View className="flex-row items-center gap-1 mt-1.5">
+                    <View className="w-5 h-5 bg-green-50 rounded-md items-center justify-center">
+                      <Ionicons name="person-circle-outline" size={12} color="#16A34A" />
+                    </View>
+                    <Text className="text-slate-500 text-[11px] font-medium" numberOfLines={1}>
+                      Assigned Driver
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+              <Card padding="md" className="flex-1">
+                <View className="items-center">
+                  <Text className="text-slate-900 text-2xl font-bold" numberOfLines={1} style={{ lineHeight: 30 }}>
+                    {driverTransport?.route_name ?? "—"}
+                  </Text>
+                  <View className="flex-row items-center gap-1 mt-1.5">
+                    <View className="w-5 h-5 bg-purple-50 rounded-md items-center justify-center">
+                      <Ionicons name="map-outline" size={12} color="#8B5CF6" />
+                    </View>
+                    <Text className="text-slate-500 text-[11px] font-medium" numberOfLines={1}>
+                      Active Route
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            <View className="flex-row items-center justify-between mb-3">
+              <Text className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                Driver Actions
+              </Text>
+            </View>
+            <View className="flex-row flex-wrap gap-2.5 mb-6">
+              {driverModules.map((module) => (
+                <TouchableOpacity
+                  key={module.label}
+                  className="w-[48%] bg-white rounded-2xl px-3.5 py-3 border border-slate-100 flex-row items-center gap-2.5"
+                  activeOpacity={0.7}
+                  onPress={() => router.push(`/${module.route}` as any)}
+                >
+                  <View
+                    className="w-9 h-9 rounded-xl items-center justify-center shrink-0"
+                    style={{ backgroundColor: module.color + "12" }}
+                  >
+                    <Ionicons name={module.icon} size={18} color={module.color} />
+                  </View>
+                  <View className="flex-1 min-w-0">
+                    <Text className="text-slate-800 font-semibold text-sm" numberOfLines={1}>
+                      {module.label}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
         ) : !hasStudents ? (
           <View className="items-center justify-center pt-20 pb-8">
             <View className="w-24 h-24 bg-primary-50 rounded-full items-center justify-center mb-6">

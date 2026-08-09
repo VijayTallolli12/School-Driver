@@ -16,11 +16,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/store/auth.store";
 import { useBrandingStore } from "@/store/branding.store";
+import { normalizeUserRole, isDriverPayload } from "@/utils/roles";
 import apiClient from "@/services/api";
 import { storage } from "@/utils/storage";
 import { STORAGE_KEYS } from "@/constants/config";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { registerForPushNotifications } from "@/services/notifications";
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Invalid email address"),
@@ -61,10 +63,16 @@ export default function LoginScreen() {
         user: Record<string, unknown>;
         students: Record<string, unknown>[];
         parent_uuid?: string;
+        driver_uuid?: string;
+        vehicle_id?: number;
+        route_id?: number;
       } = wrapper.data;
       if (!payload || !payload.token) {
         throw new Error("Login did not return valid user credentials.");
       }
+
+      const userRole: "parent" | "driver" =
+        normalizeUserRole(payload.user) ?? (isDriverPayload(payload) ? "driver" : "parent");
 
       const mappedUser = {
         id: payload.user.id as number,
@@ -72,7 +80,7 @@ export default function LoginScreen() {
         email: (payload.user.email as string) ?? "",
         phone: (payload.user.phone as string) ?? "",
         avatar_url: (payload.user.avatar_url as string) ?? null,
-        role: "parent" as const,
+        role: userRole,
       };
 
       const mappedStudents = (payload.students ?? []).map((s) => ({
@@ -91,10 +99,18 @@ export default function LoginScreen() {
         students: mappedStudents,
         token: payload.token,
         parent_uuid: (payload.parent_uuid as string | undefined) ?? undefined,
+        driver_uuid: (payload.driver_uuid as string | undefined) ?? undefined,
+        vehicle_id: (payload.vehicle_id as number | undefined) ?? undefined,
+        route_id: (payload.route_id as number | undefined) ?? undefined,
       });
 
       await storage.set(STORAGE_KEYS.AUTH_TOKEN, payload.token);
-      router.replace("/(tabs)/(home)" as any);
+      if (userRole === "driver") {
+        void registerForPushNotifications();
+        router.replace("/(tabs)/(home)/transport" as any);
+      } else {
+        router.replace("/(tabs)/(home)" as any);
+      }
     } catch (error: any) {
       const message =
         error.response?.data?.message ||

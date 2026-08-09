@@ -13,6 +13,9 @@ interface AuthActions {
   hydrateFromApi: (data: LoginResponse) => void;
   setParentUuid: (uuid: string | null) => void;
   setSelectedStudentUuid: (uuid: string | null) => void;
+  setDriverUuid: (uuid: string | null) => void;
+  setAssignedVehicleId: (vehicleId: number | null) => void;
+  setAssignedRouteId: (routeId: number | null) => void;
 }
 
 type AuthStore = AuthState & AuthActions;
@@ -27,6 +30,9 @@ export const useAuthStore = create<AuthStore>()(
       isLoading: false,
       parentUuid: null,
       selectedStudentUuid: null,
+      driverUuid: null,
+      assignedVehicleId: null,
+      assignedRouteId: null,
 
       login: async (_payload: LoginPayload) => {
         set({ isLoading: true });
@@ -41,6 +47,9 @@ export const useAuthStore = create<AuthStore>()(
           isAuthenticated: false,
           parentUuid: null,
           selectedStudentUuid: null,
+          driverUuid: null,
+          assignedVehicleId: null,
+          assignedRouteId: null,
         });
       },
 
@@ -61,12 +70,21 @@ export const useAuthStore = create<AuthStore>()(
           isAuthenticated: true,
           isLoading: false,
           parentUuid: data.parent_uuid ?? null,
-          selectedStudentUuid: data.students?.[0]?.uuid ?? null,
+          selectedStudentUuid: data.user.role === "parent" ? data.students?.[0]?.uuid ?? null : null,
+          driverUuid: data.driver_uuid ?? null,
+          assignedVehicleId: data.vehicle_id ?? null,
+          assignedRouteId: data.route_id ?? null,
         }),
 
       setParentUuid: (uuid: string | null) => set({ parentUuid: uuid }),
 
       setSelectedStudentUuid: (uuid: string | null) => set({ selectedStudentUuid: uuid }),
+
+      setDriverUuid: (uuid: string | null) => set({ driverUuid: uuid }),
+
+      setAssignedVehicleId: (vehicleId: number | null) => set({ assignedVehicleId: vehicleId }),
+
+      setAssignedRouteId: (routeId: number | null) => set({ assignedRouteId: routeId }),
     }),
     {
       name: "school_parent_auth_store",
@@ -78,6 +96,9 @@ export const useAuthStore = create<AuthStore>()(
         isAuthenticated: state.isAuthenticated,
         parentUuid: state.parentUuid,
         selectedStudentUuid: state.selectedStudentUuid,
+        driverUuid: state.driverUuid,
+        assignedVehicleId: state.assignedVehicleId,
+        assignedRouteId: state.assignedRouteId,
       }),
     },
   ),

@@ -8,6 +8,7 @@ export default function ProfileLayout() {
       <Stack.Screen name="change-password" />
       <Stack.Screen name="privacy" />
       <Stack.Screen name="help" />
+      <Stack.Screen name="settings" />
     </Stack>
   );
 }

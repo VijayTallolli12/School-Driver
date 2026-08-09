@@ -140,3 +140,80 @@ Login/me returns wrapped in `{ success, message, data: { token, user, students, 
 - If fees tables still show "No data" after deploy → open browser console → look for `[Fee DT]` prefix logs
 - If `recordsTotal` > 0 but no rows render → likely Bootstrap tab `display:none` + DataTables `responsive: true` interaction
 - Workaround for hidden tab DataTables: call `table.columns.adjust().responsive.recalc()` on tab `shown.bs.tab` event
+
+## Session 2026-08-10 — Driver App (Expo) Reliability & Polish
+
+### New Screens (all API-integrated)
+- `transport/trip-history` — `GET /driver/trips/history` (fetchTripHistory), light theme, split Start/End/Duration/Stops/Picked/Attendance blocks
+- `transport/emergency` — SOS alert POST with current snapshot (lat/lng/accuracy from expo-location)
+- `profile/settings` — push toggle (services/notifications `isPushEnabled`/`setPushEnabled`), app version, ACTIVE_API_URL display, links to privacy/help
+
+### Reliability Changes
+- **Flush mutex**: `src/utils/flushMutex.ts` (`withFlushMutex`) serializes concurrent flushes of the location & attendance queue; used in `flushLocationQueue` and `flushAttendanceQueue` (background task + foreground watcher + manual Sync now share one in-flight run)
+- **GPS accuracy gating**: `tripTracking.ts` exports `isUsableFix` (drops fixes > `MIN_USABLE_ACCURACY_METERS` = 250 m), `accuracyQuality` (high/ok/poor/none), `snapshotToPoint`. Applied in foreground watch, `locationTask.ts` background task, and `handleTripSample`. `accuracy` is now sent on `TripLocationPoint`
+- **Weak-GPS banner**: live-trip shows an amber warning when `position.accuracy` is poor; SOS Fix banner got accessibility labels
+- **Stop attendance (pickup/drop/missed)**: `stop-attendance.tsx` was redesigned around the real backend contract — each student row shows the active trip side (from `trip.type`), a status chip (pending/picked/dropped/missed), and `[PICKUP] [DROP]` buttons (irrelevant side disabled for single-leg trips) + a `MISSED` link. Actions mark `trip_student_id` optimistically with per-student offline queue fallback; "NEXT STOP" confirms when students remain unmarked. Swipe present/absent UI removed.
+
+### Runtime Input Validation
+- `src/utils/driverValidation.ts` — zod schemas for `DriverTripActionPayload` (trip_id/trip_student_id/action pickup|drop|missed/action_id/triggered_at), `TripLocationPoint` + queued variants; `parseDriverActionPayload`/`parseTripLocationPoint` are called inside `enqueueAttendance`/`enqueueLocation` so malformed entries never reach persisted queues
+- `src/services/driverTripQueue.ts` — AsyncStorage-backed `driver_trip_action_queue` keyed by `action_id`; `flushAttendanceQueue` POSTs via `markDriverTripAction` under `withFlushMutex("attendance-queue")`
+
+### Expo Go gating
+- `src/utils/environment.ts` — `isExpoGo()` (checks `Constants.executionEnvironment === ExecutionEnvironment.StoreClient`)
+- Remote push + background tasks are unsupported in Expo Go (SDK 53+): `registerForPushNotifications()` early-returns in Expo Go, and `_layout.tsx` dynamically imports `locationTask` (background-task registration) only when NOT in Expo Go — Expo Go boots cleanly, dev builds get full background sync
+
+### Testing
+- Jest configured: `jest.config.js` (jest-expo preset + `^@/` moduleNameMapper); `npm test` / `npm run typecheck`
+- jest **must be v29** (jest-expo 57 does not work with jest 30: `clearMocksOnScope is not a function`)
+- Suites in `src/utils/__tests__/`: geo, transport normalization, flushMutex, driverValidation, roles, sosQueue (39 tests)
+- EAS build profiles added in `eas.json` (development/preview/production)
+
+## Session 2026-08-10 (cont.) — Role-based auth & SOS hardening
+
+### Role-based auth
+- `src/utils/roles.ts` — `normalizeUserRole` (tolerates `role` string, `roles` string[] or spatie-style `[{id, name}]`; prefers `driver` whenever any driver signal exists; never guesses "parent") and `isDriverPayload` (driver detection via `driver_uuid`/`vehicle_id`/`route_id`)
+- Wired into login.tsx (populates `driverUuid`/`assignedVehicleId`/`assignedRouteId`), splash (index.tsx), alerts, home, transport index
+
+### Offline SOS queue
+- `src/services/sosQueue.ts` — AsyncStorage-backed `driver_sos_queue` with `enqueueSos` (dedupes by driver+uuid+trip+recorded_at) and `flushSosQueue` (serialized via `withFlushMutex("sos-queue")`). On network error the entry is kept AND later entries are still attempted (no `break`, so they're never stranded); backend-rejected entries are dropped once so they can't loop forever
+- Flush wired into app cold start (`_layout.tsx`, only when authenticated) + alerts screen "Sync Now" (SOS badge shows unsent count)
+- `emergency.tsx` drops `tel:` dial-out in favor of POST/queue with tap-to-resend; retry block is only rendered for `queued`/`error` so unreachable `sending` comparisons were removed
+- Expo Go note: `battery_level` on SOS payload is not part of `SosAlertPayload`
+
+### Live-trip reliability
+- END TRIP guarded by `endGuardRef` (no duplicate POST if auto-completion races a manual tap)
+- Dev-friendly early end: `src/utils/environment.ts` `allowForceEnd()` (true in `__DEV__`). In dev builds END TRIP works from ANY stop — it turns amber, reads "END TRIP (EARLY)", and asks for explicit confirmation before POSTing `/driver/trips/{trip}/end`. Production keeps the last-stop-only gate. The backend `/end` endpoint itself has no stop gate.
+- `stop-attendance.tsx` arrival is non-blocking: `arriveAtStop` failure (incl. network) no longer blocks loading the student roster — only non-network errors surface
+- live-trip shows a GPS-quality chip (High/OK/Poor) next to the tracking pill; all action buttons have accessibility labels/hints
+- Removed legacy `transport/route.tsx` + `transport/driver.tsx` (overlapped live-trip flow) — also removed their `Stack.Screen` entries and Profile menu items ("Vehicle Info", "Assigned Routes")
+
+### Driver trip API contract (verified against `school` backend, 2026-08-10)
+The real backend endpoints differ from what the app first assumed:
+- `GET /driver/trips/current` (NOT `/trips/active`) returns the driver's current or next-scheduled trip as `{ has_current_trip, trip, route, vehicle, stops }`; trip.status is `scheduled | in_progress | completed`
+- `POST /driver/trips/start` requires body `{ trip_id }` (TripStartRequest) — starts a pre-created `scheduled` trip; returns `{ trip: { id, status, started_at } }`
+- `POST /driver/trips/{trip}/start` (by URL) also exists
+- `GET /driver/trips/{trip}` returns nested `{ trip, route, vehicle, stops }`
+- `arrive-stop`/`leave-stop` require `route_stop_id` (NOT `stop_id`)
+- Trip payloads expose per-stop progress derived from `trip_events`: each stop carries `arrived_at`/`left_at` (`stop_arrived` / `stop_left` events, nullable), and the trip carries `current_stop_id` (first stop arrived-but-not-left), `next_stop_id`, `completed_stops` (stops left). Frontend `normalizeDriverTripDetails()` maps these — they replace the old hardcoded `current_stop_id: null` / `completed_stops: 0`. END TRIP on live-trip is gated on `currentIndex === stops.length - 1`, so enabling now depends on real progress
+- Attendance is marked per-student via `POST /driver/trips/{trip}/pickup`, `POST /driver/trips/{trip}/drop`, and `POST /driver/trips/{trip}/mark-missed`; each takes `trip_student_id` (the pivot id, NOT `student_id`) + `Idempotency-Key`. `mark-missed` runs in a DB transaction and takes an optional `reason`; request classes reject the legacy `status`/`student_id`/`stop_id` payload the app first used
+
+Frontend `src/services/api.ts` now normalizes backend payloads into the flat `DriverTripSummary` via `normalizeDriverTripDetails()`; dashboard `transport/index.tsx` shows the real scheduled trip and passes `trip_id` to START TRIP (disabled when no trip today).
+
+### Live location contract (verified + aligned, 2026-08-10)
+- App posts `POST /driver/trips/{trip}/location` with `{ locations: [{ lat, lng, speed, heading, accuracy, timestamp }] }` (batch, `TripLocationUpdateRequest`) or a single flat point. Backend `DriverApiService::updateTripLocation()` derives `vehicle`/`trip` from the route binding (no `vehicle_id` needed), writes one `VehicleLocation` + one `location_update` trip_event per point, and dispatches `LocationUpdated` once for the latest point.
+- The legacy `POST /driver/location` single-point endpoint (flat `latitude`/`longitude`/`captured_at` + required `vehicle_id`, `UpdateDriverLocationRequest`) is unchanged and still routes to `updateLocation`. Do NOT send the app's `lat/lng/timestamp` shape there.
+- If a URL 404s on a route that exists in `routes/modules/api/driver.php`, the running server is stale → `php artisan optimize:clear` + restart `php artisan serve` (no route cache / Octane in this repo).
+
+## Session 2026-08-10 (cont.) — Admin SOS Alerts (backend)
+
+### Data model
+- New table `driver_sos_alerts` (migration `2026_08_10_000002`) — `driver_id`, `trip_id`, `latitude`, `longitude`, `message`, `status` (`new | acknowledged | resolved`), `notes`, `handled_by` (user id), `handled_at`. Model `App\Modules\Transport\Models\SosAlert` **must declare `protected $table = 'driver_sos_alerts'`** (pluralizer resolves the wrong `sos_alerts` otherwise).
+
+### Driver write path
+- `DriverApiService::sos()` (app/Modules/Driver/Services/DriverApiService.php:1175) — after the existing `sos_alert` trip_event + activity + `Log::warning`, now also `SosAlert::create([...status 'new'])`.
+
+### Admin UI
+- Sidebar → Transport → **SOS Alerts** (`admin/transport/sos`), permissions `transport.view` (list) / `transport.update` (invoice).
+- Routes in `routes/modules/transport.php` under `admin.transport.sos.{index,data,show,update}` (`admin.` prefix applied in routes/web.php).
+- `TransportController` `sosIndex` (status cards new/acknowledged/resolved/total) + `sosData` (Yajra DataTable, message `e()`-escaped) + `sosShow` + `updateSos` (`UpdateSosRequest`: `status` in:new,acknowledged,resolved + `notes`; sets `handled_by`/`handled_at`).
+- Views `resources/views/modules/transport/sos.blade.php` + partials `_sos_status` / `_sos_actions`; "Take Action" modal posts the `.ajax-form` → global `app.js` dispatches `erp:success` on success (page then reloads).
