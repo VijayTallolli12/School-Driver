@@ -13,11 +13,19 @@
     },
     "preview": {
       "distribution": "internal",
-      "channel": "preview"
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://school-erp-production-e3a5.up.railway.app/api/v1",
+        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyB9cabiamvIwM8WNo7BLBihA9Y894bk8x0"
+      }
     },
     "production": {
       "autoIncrement": true,
-      "channel": "production"
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://school-erp-production-e3a5.up.railway.app/api/v1",
+        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyB9cabiamvIwM8WNo7BLBihA9Y894bk8x0"
+      }
     }
   },
   "submit": {
