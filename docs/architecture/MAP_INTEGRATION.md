@@ -31,10 +31,11 @@ Status: **Implemented** via `react-native-maps` (v1.20.1, SDK 54 compatible)
 
 ## API key (Android)
 
-`app.json` → `android.config.googleMaps.apiKey` is set to the placeholder
-`"YOUR_ANDROID_GOOGLE_MAPS_API_KEY"`.
+`app.json` → `android.config.googleMaps.apiKey` is set to the real Maps SDK key
+`"AIzaSyB9cabiamvIwM8WNo7BLBihA9Y894bk8x0"`.
 
-**Action required before Android release:** replace it with a real Google Maps Android SDK key (see `REALTIME_SYNC_FLOW` note on where it's consumed). Until then Android renders a gray map background with markers/polyline on top.
+The key is sourced from `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` (`.env` / `.env.development` /
+`.env.production` / EAS build env) via `app.config.js`.
 
 ## Web
 

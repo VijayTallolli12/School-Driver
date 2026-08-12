@@ -1,12 +1,12 @@
 import axios from "axios";
-import { API_BASE_URL } from "@/config/api";
+import { API_BASE_URL_FULL } from "@/config/api";
 import { storage } from "@/utils/storage";
 import { STORAGE_KEYS } from "@/constants/config";
 import { useAuthStore } from "@/store/auth.store";
 import type { AttendanceData, DashboardData, NotificationItem, StudentFee, ExamResultRecord, TimetableData, HomeworkItem, CalendarEvent, StudentDocument, CircularItem, LeaveRequest, LeaveRequestPayload, TransportDashboardData, TransportData, TransportStop, TransportLiveData, VehicleLocationHistoryPoint, DriverTripActionPayload, DriverTripStateResponse, DriverTripSummary, DriverTripStudent, DriverTripStudentStatus, TripLocationPoint, TripHistoryItem, SosAlertPayload } from "@/types";
 
 const apiClient = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_BASE_URL_FULL,
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
@@ -40,7 +40,7 @@ apiClient.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     if (__DEV__) {
-      const fullUrl = `${config.baseURL ?? API_BASE_URL}${config.url ?? ""}`;
+      const fullUrl = `${config.baseURL ?? API_BASE_URL_FULL}${config.url ?? ""}`;
       console.log("[API] REQUEST:", config.method?.toUpperCase(), fullUrl);
     }
     return config;
@@ -632,7 +632,7 @@ export async function sendSosAlert(payload: SosAlertPayload): Promise<Record<str
 }
 
 export async function fetchTripHistory(): Promise<TripHistoryItem[]> {
-  const res = await apiClient.get("/driver/trips");
+  const res = await apiClient.get("/driver/trips/history");
   const body = unwrap<{ trips?: TripHistoryItem[]; data?: TripHistoryItem[] }>(res);
   return body.trips ?? body.data ?? [];
 }

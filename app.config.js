@@ -1,5 +1,5 @@
-const DEFAULT_API_URL = "https://school-erp-production-e3a5.up.railway.app/api/v1";
-const MAPS_KEY_PLACEHOLDER = "YOUR_ANDROID_GOOGLE_MAPS_API_KEY";
+const DEFAULT_API_URL = "https://paleturquoise-monkey-126256.hostingersite.com/";
+const MAPS_KEY_PLACEHOLDER = "AIzaSyB9cabiamvIwM8WNo7BLBihA9Y894bk8x0";
 
 /**
  * Dynamic Expo config. Reads EXPO_PUBLIC_* vars (loaded from .env / .env.development /
